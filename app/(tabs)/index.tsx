@@ -1,98 +1,145 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import * as Location from 'expo-location';
+import * as Speech from 'expo-speech';
+import { StatusBar } from 'expo-status-bar';
+import React, { useEffect, useRef, useState } from 'react';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
-export default function HomeScreen() {
+export default function SpeedometerScreen() {
+  const [speed, setSpeed] = useState(0);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const lastSpeedRef = useRef(0);
+
+  // Speed thresholds to trigger voice alert
+  const thresholds = [50, 60, 90, 120];
+
+  useEffect(() => {
+    let subscriber: Location.LocationSubscription | null = null;
+
+    const startLocationTracking = async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setErrorMsg('Cần quyền truy cập vị trí để đo tốc độ.');
+        return;
+      }
+
+      subscriber = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.BestForNavigation,
+          timeInterval: 500, // Update every 500ms
+          distanceInterval: 0,
+        },
+        (location) => {
+          // location.coords.speed is in meters/second. 
+          // If speed is -1, it means invalid/stationary in some contexts, but usually handled as 0.
+          let speedMs = location.coords.speed || 0;
+          if (speedMs < 0) speedMs = 0;
+
+          // Convert to km/h
+          const speedKmh = Math.round(speedMs * 3.6);
+
+          handleSpeedChange(speedKmh);
+        }
+      );
+    };
+
+    startLocationTracking();
+
+    return () => {
+      if (subscriber) {
+        subscriber.remove();
+      }
+    };
+  }, []);
+
+  const handleSpeedChange = (currentSpeed: number) => {
+    const prevSpeed = lastSpeedRef.current;
+
+    // Check if we crossed any threshold upwards
+    thresholds.forEach((t) => {
+      if (prevSpeed < t && currentSpeed >= t) {
+        speakSpeed(t);
+      }
+    });
+
+    setSpeed(currentSpeed);
+    lastSpeedRef.current = currentSpeed;
+  };
+
+  const speakSpeed = (num: number) => {
+    // Speak the number in Vietnamese if possible, otherwise default
+    // We explicitly try 'vi-VN' first.
+    Speech.speak(num.toString(), { language: 'vi-VN' });
+  };
+
+  // Determine color based on speed for visual feedback
+  const getSpeedColor = (s: number) => {
+    if (s >= 120) return '#FF3B30'; // Red - Danger
+    if (s >= 90) return '#FF9500';  // Orange - Warning
+    if (s >= 60) return '#FFCC00';  // Yellow - Caution
+    return '#34C759';               // Green - Safe
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <SafeAreaView style={styles.container}>
+      <StatusBar style="light" />
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      {errorMsg ? (
+        <View style={styles.centerContainer}>
+          <Text style={styles.errorText}>{errorMsg}</Text>
+        </View>
+      ) : (
+        <View style={styles.centerContainer}>
+          <Text style={styles.label}>TỐC ĐỘ</Text>
+          <Text style={[styles.speedText, { color: getSpeedColor(speed) }]}>
+            {speed}
+          </Text>
+          <Text style={styles.unitText}>km/h</Text>
+        </View>
+      )}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  label: {
+    color: '#888',
+    fontSize: 24,
+    textTransform: 'uppercase',
+    letterSpacing: 4,
+    marginBottom: 20,
+    fontFamily: 'System', // Use default system font
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  speedText: {
+    fontSize: 180,
+    fontWeight: 'bold',
+    fontVariant: ['tabular-nums'],
+    includeFontPadding: false,
+    lineHeight: 180,
+    fontFamily: 'System',
+  },
+  unitText: {
+    color: '#888',
+    fontSize: 32,
+    marginTop: 10,
+    fontFamily: 'System',
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 18,
+    textAlign: 'center',
+    marginHorizontal: 20,
   },
 });
+
