@@ -23,6 +23,8 @@
       "package": "com.mjnamjkaze.myappreactnative",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
@@ -61,6 +63,12 @@
         "projectId": "3814cf57-4f08-4f7e-9af5-cc060005792d"
       }
     },
-    "owner": "mjnamjkaze"
+    "owner": "mjnamjkaze",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/3814cf57-4f08-4f7e-9af5-cc060005792d"
+    }
   }
 }
