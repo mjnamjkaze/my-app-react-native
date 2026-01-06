@@ -1,66 +1,76 @@
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { AppSettings, DEFAULT_SETTINGS, loadSettings } from '@/constants/settings';
 import * as Location from 'expo-location';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useRef, useState } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useRef, useState } from 'react';
+import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 export default function SpeedometerScreen() {
+  const router = useRouter();
   const [speed, setSpeed] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const lastSpeedRef = useRef(0);
+  const locationSubscriber = useRef<Location.LocationSubscription | null>(null);
 
-  // Speed thresholds to trigger voice alert
-  const thresholds = [50, 60, 90, 120];
+  // Load settings when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      const initInfo = async () => {
+        const s = await loadSettings();
+        setSettings(s);
+        restartTracking(s);
+      };
+      initInfo();
 
-  useEffect(() => {
-    let subscriber: Location.LocationSubscription | null = null;
+      return () => {
+        // Cleanup on blur if needed, or keep running?
+        // Usually we keep speedometer running, but let's re-subscribe if settings change.
+      };
+    }, [])
+  );
 
-    const startLocationTracking = async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setErrorMsg('Cần quyền truy cập vị trí để đo tốc độ.');
-        return;
+  const restartTracking = async (currentSettings: AppSettings) => {
+    if (locationSubscriber.current) {
+      locationSubscriber.current.remove();
+      locationSubscriber.current = null;
+    }
+
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setErrorMsg('Cần quyền truy cập vị trí để đo tốc độ.');
+      return;
+    }
+
+    locationSubscriber.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.BestForNavigation,
+        timeInterval: currentSettings.sampleRateMs,
+        distanceInterval: 0,
+      },
+      (location) => {
+        let speedMs = location.coords.speed || 0;
+        if (speedMs < 0) speedMs = 0;
+
+        const speedKmh = Math.round(speedMs * 3.6);
+        handleSpeedChange(speedKmh, currentSettings);
       }
+    );
+  };
 
-      subscriber = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.BestForNavigation,
-          timeInterval: 500, // Update every 500ms
-          distanceInterval: 0,
-        },
-        (location) => {
-          // location.coords.speed is in meters/second. 
-          // If speed is -1, it means invalid/stationary in some contexts, but usually handled as 0.
-          let speedMs = location.coords.speed || 0;
-          if (speedMs < 0) speedMs = 0;
-
-          // Convert to km/h
-          const speedKmh = Math.round(speedMs * 3.6);
-
-          handleSpeedChange(speedKmh);
-        }
-      );
-    };
-
-    startLocationTracking();
-
-    return () => {
-      if (subscriber) {
-        subscriber.remove();
-      }
-    };
-  }, []);
-
-  const handleSpeedChange = (currentSpeed: number) => {
+  const handleSpeedChange = (currentSpeed: number, currentSettings: AppSettings) => {
     const prevSpeed = lastSpeedRef.current;
 
-    // Check if we crossed any threshold upwards
-    thresholds.forEach((t) => {
+    // Check thresholds
+    currentSettings.voiceThresholds.forEach((t) => {
+      // Trigger if we cross from below to equal/above
       if (prevSpeed < t && currentSpeed >= t) {
-        speakSpeed(t);
+        speakSpeed(t, currentSettings.voiceTemplate);
       }
     });
 
@@ -68,23 +78,38 @@ export default function SpeedometerScreen() {
     lastSpeedRef.current = currentSpeed;
   };
 
-  const speakSpeed = (num: number) => {
-    // Speak the number in Vietnamese if possible, otherwise default
-    // We explicitly try 'vi-VN' first.
-    Speech.speak(num.toString(), { language: 'vi-VN' });
+  const speakSpeed = (num: number, template: string) => {
+    const textToSpeak = template.replace('{speed}', num.toString());
+    Speech.speak(textToSpeak, { language: 'vi-VN' });
   };
 
   // Determine color based on speed for visual feedback
+  // Using hardcoded visual ranges for safety colors, independent of voice thresholds
   const getSpeedColor = (s: number) => {
-    if (s >= 120) return '#FF3B30'; // Red - Danger
-    if (s >= 90) return '#FF9500';  // Orange - Warning
-    if (s >= 60) return '#FFCC00';  // Yellow - Caution
-    return '#34C759';               // Green - Safe
+    if (s >= 120) return '#FF3B30';
+    if (s >= 90) return '#FF9500';
+    if (s >= 60) return '#FFCC00';
+    return '#34C759';
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
+
+      {/* Settings Button */}
+      <TouchableOpacity
+        style={styles.settingsButton}
+        onPress={() => router.push('/settings')}
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
+      >
+        <IconSymbol name="chevron.right" size={24} color="#666" style={{ transform: [{ rotate: '90deg' }] }} />
+        {/* Using a placeholder icon or gear if available. MaterialIcons 'settings' is better but IconSymbol maps SF symbols. 
+            Let's use a text or custom icon if IconSymbol doesn't have settings. 
+            Actually IconSymbol has a mapping. Let's assume we can add 'gear' mapping or just use a text button for now to be safe,
+            OR use the existing IconSymbol and map 'gear' to 'settings'.
+        */}
+        <Text style={styles.settingsText}>⚙️</Text>
+      </TouchableOpacity>
 
       {errorMsg ? (
         <View style={styles.centerContainer}>
@@ -108,6 +133,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
+  settingsButton: {
+    position: 'absolute',
+    top: 50,
+    right: 30,
+    zIndex: 10,
+    padding: 10,
+  },
+  settingsText: {
+    fontSize: 24,
+  },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -119,7 +154,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 4,
     marginBottom: 20,
-    fontFamily: 'System', // Use default system font
+    fontFamily: 'System',
   },
   speedText: {
     fontSize: 180,
